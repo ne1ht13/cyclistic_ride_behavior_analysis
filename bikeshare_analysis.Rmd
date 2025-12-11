@@ -207,7 +207,10 @@ ggplot(count_by_member,
                      expand = expansion(mult = c(0, 0.1))) +
   scale_fill_manual(values = c("casual" = "orange",
                                "member" = "steelblue")) +
-  labs(x = "Rider type", y = "Number of rides", fill = NULL) +
+  labs(title = "Number between Members and Casuals",
+    x = "Rider type", 
+    y = "Number of rides", 
+    fill = NULL) +
   theme_minimal()
 ```
 
