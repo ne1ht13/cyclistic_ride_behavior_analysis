@@ -196,12 +196,12 @@ all_trips_cleaned <- read.csv("data/all_trips_cleaned.csv")
 
 ```{r}
 count_by_member <- all_trips_cleaned %>%
-  count(member_casual)
+  count(member_casual, name = "total_rides")
 
 ggplot(count_by_member,
-       aes(x = member_casual, y = n, fill = member_casual)) +
+       aes(x = member_casual, y = total_rides, fill = member_casual)) +
   geom_col(width = 0.6) +
-  geom_text(aes(label = comma(n)),   # show real numbers on bars
+  geom_text(aes(label = comma(total_rides)),   # show real numbers on bars
             vjust = -0.3, size = 4) +
   scale_y_continuous(labels = comma, # turn off scientific notation
                      expand = expansion(mult = c(0, 0.1))) +
@@ -216,25 +216,27 @@ ggplot(count_by_member,
 
 ```{r}
 bike_type_counts <- all_trips_cleaned %>%
-  count(rideable_type, member_casual)
+  group_by(member_casual)%>% 
+  count(rideable_type, name = "total_rides")
 
 ggplot(bike_type_counts,
-       aes(x = rideable_type, y = n, fill = member_casual)) +
-  geom_col() +
-  geom_text(aes(label = comma(n)),   # show real numbers on bars
+       aes(x = rideable_type, y = total_rides, fill = member_casual)) +
+  geom_col(position = position_dodge(width = 0.8)) +
+  geom_text(aes(label = comma(total_rides)),
+            position = position_dodge(width = 0.8),
             vjust = -0.3, size = 4) +
   scale_y_continuous(labels = comma) +
   scale_x_discrete(labels = c(
-    "classic_bike" = "Classic Bike",
-    "docked_bike"  = "Docked Bike",
-    "electric_bike"= "Electric Bike"
+    "classic_bike"  = "Classic Bike",
+    "docked_bike"   = "Docked Bike",
+    "electric_bike" = "Electric Bike"
   )) +
-  scale_fill_manual(values = c("casual" = "orange",
-                               "member" = "steelblue")) +
+  scale_fill_manual(values = c("member" = "steelblue",
+                               "casual" = "orange")) +
   labs(
     title = "Frequency of Bike Types Preferred by Riders",
     x = "Bike Type",
-    y = "Frequency",
+    y = "Number of rides",
     fill = "Member Type"
   ) +
   theme_minimal(base_size = 13)
@@ -307,28 +309,36 @@ duration_data <- all_trips_cleaned %>%
   filter(
     !is.na(ride_length),
     ride_length > 0,
-    ride_length <= 120          # keep rides up to 2 hours
+    ride_length <= 30          # keep rides up to 2 hours
   )
 
 ggplot(duration_data,
        aes(x = ride_length, fill = member_casual)) +
-  geom_histogram(color = "white", bins = 100) +
-  facet_wrap(~ member_casual, ncol = 1, scales = "free_y") +
+  geom_histogram(
+    aes(y = after_stat(count / sum(count))),  # <- convert to proportion
+    color = "white",
+    bins = 100
+  ) +
+  facet_wrap(~ member_casual, ncol = 1) +
   scale_fill_manual(values = c(
     "casual" = "orange",
     "member" = "steelblue"
   )) +
   scale_x_continuous(
-    limits = c(0, 120),
-    breaks = seq(0, 120, by = 15),
-    labels = seq(0, 120, by = 15)
+    limits = c(0, 30),
+    breaks = seq(0, 30, by = 5),
+    labels = seq(0, 30, by = 5)
   ) +
-  scale_y_continuous(labels = comma) +
+  scale_y_continuous(
+    labels = label_percent(accuracy = 1),     # show 0%, 5%, 10%, ...
+    expand = expansion(mult = c(0, 0.02))
+  ) +
   labs(
     title = "Distribution of Ride Duration by Member Type",
     x = "Ride duration (minutes)",
-    y = "Number of rides",
-    fill = "Member Type") +
+    y = "Share of rides (%)",
+    fill = "Member Type"
+  ) +
   theme_minimal(base_size = 13)
 ```
 
@@ -364,61 +374,55 @@ ggplot(duration_box_data,
 ```{r}
 N_top <- 10   # choose how many top stations you want
 
-top_start_stations <- all_trips_cleaned %>%
+
+top_start_stations_pct <- all_trips_cleaned %>%
   filter(!is.na(start_station_name),
          start_station_name != "") %>%
   count(member_casual, start_station_name, name = "rides") %>%
   group_by(member_casual) %>%
   slice_max(rides, n = N_top, with_ties = FALSE) %>%
-  ungroup()
+  ungroup() %>%
+  # add totals and compute percentage
+  left_join(count_by_member, by = "member_casual") %>%
+  mutate(pct = rides / total_rides)   # pct is 0–1
 
 
-# get a nice range for x-axis
-casual_data <- top_start_stations %>%
+casual_data <- top_start_stations_pct %>%
   filter(member_casual == "casual")
 
-max_casual <- max(casual_data$rides)
-breaks_casual <- pretty(c(0, max_casual), n = 5)
-
 ggplot(casual_data,
-       aes(x = rides,
-           y = reorder(start_station_name, rides))) +
+       aes(x = pct,
+           y = reorder(start_station_name, pct))) +
   geom_col(fill = "orange") +
   scale_x_continuous(
-    breaks = breaks_casual,
-    labels = comma(breaks_casual),
+    labels = percent_format(accuracy = 0.1),  # e.g. 0.5%, 1.0%, ...
     expand = expansion(mult = c(0, .02))
   ) +
   labs(
-    title = "Top 10 Start Stations – Casual Riders",
-    x = "Number of rides",
+    title = "Top 10 Start Stations – Casual Riders (Share of Casual Rides)",
+    x = "Share of all casual rides",
     y = "Start station"
   ) +
   theme_minimal(base_size = 13)
-
 ```
 
 
 ```{r}
-member_data <- top_start_stations %>%
+member_data <- top_start_stations_pct %>%
   filter(member_casual == "member")
 
-max_member <- max(member_data$rides)
-breaks_member <- pretty(c(0, max_member), n = 5)
-
 ggplot(member_data,
-       aes(x = rides,
-           y = reorder(start_station_name, rides))) +
+       aes(x = pct,
+           y = reorder(start_station_name, pct))) +
   geom_col(fill = "steelblue") +
   scale_x_continuous(
-    breaks = breaks_member,
-    labels = comma(breaks_member),
+    labels = percent_format(accuracy = 0.1),
     expand = expansion(mult = c(0, .02))
   ) +
   labs(
-    title = "Top 10 Start Stations – Members",
-    x = "Number of rides",
+    title = "Top 10 Start Stations – Members (Share of Member Rides)",
+    x = "Share of all member rides",
     y = "Start station"
   ) +
-  theme_minimal(base_size = 13)
+  theme_minimal(base_size =13)
 ```
