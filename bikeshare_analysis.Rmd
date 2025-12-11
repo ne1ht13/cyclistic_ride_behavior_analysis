@@ -15,13 +15,13 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 install.packages("tidyverse")
 install.packages("skimr")
-install.packages("janitor")
+install.packages("scales")
 ```
 
 ```{r}
 library(tidyverse)
 library(skimr)
-library(janitor)
+library(scales)
 ```
 
 #Load datasets
@@ -137,14 +137,6 @@ all_trips<- all_trips %>%
 ```
 
 ```{r}
-colSums(is.na(all_trips[c("start_station_name", "end_station_name")]))
-```
-
-
-```{r}
-skim_without_charts(all_trips)
-```
-```{r}
 all_trips <- all_trips %>% 
   mutate(
     started_at = ymd_hms(started_at, tz = "America/Chicago"),
@@ -175,5 +167,255 @@ all_trips <- all_trips %>%
     )
   )
 ```
+```{r}
+all_trips<- all_trips %>% 
+  distinct(ride_id, .keep_all = TRUE)
+
+sum(duplicated(all_trips$ride_id))
+```
+
+```{r}
+skim_without_charts(all_trips)
+```
+
+```{r}
+summary(all_trips)
+```
+
+```{r}
+write.csv(
+  all_trips,
+  file = "data/all_trips_cleaned.csv",
+  row.names = FALSE
+)
+```
+
+```{r}
+all_trips_cleaned <- read.csv("data/all_trips_cleaned.csv")
+```
+
+```{r}
+count_by_member <- all_trips_cleaned %>%
+  count(member_casual)
+
+ggplot(count_by_member,
+       aes(x = member_casual, y = n, fill = member_casual)) +
+  geom_col(width = 0.6) +
+  geom_text(aes(label = comma(n)),   # show real numbers on bars
+            vjust = -0.3, size = 4) +
+  scale_y_continuous(labels = comma, # turn off scientific notation
+                     expand = expansion(mult = c(0, 0.1))) +
+  scale_fill_manual(values = c("casual" = "orange",
+                               "member" = "steelblue")) +
+  labs(x = "Rider type", y = "Number of rides", fill = NULL) +
+  theme_minimal()
+```
+
+```{r}
+bike_type_counts <- all_trips_cleaned %>%
+  count(rideable_type, member_casual)
+
+ggplot(bike_type_counts,
+       aes(x = rideable_type, y = n, fill = member_casual)) +
+  geom_col() +
+  geom_text(aes(label = comma(n)),   # show real numbers on bars
+            vjust = -0.3, size = 4) +
+  scale_y_continuous(labels = comma) +
+  scale_x_discrete(labels = c(
+    "classic_bike" = "Classic Bike",
+    "docked_bike"  = "Docked Bike",
+    "electric_bike"= "Electric Bike"
+  )) +
+  scale_fill_manual(values = c("casual" = "orange",
+                               "member" = "steelblue")) +
+  labs(
+    title = "Frequency of Bike Types Preferred by Riders",
+    x = "Bike Type",
+    y = "Frequency",
+    fill = "Member Type"
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+→ Immediately shows if members peak around 8–9am & 5–6pm while casuals peak midday or on weekends.
+Heatmaps of bike usage by hour and day-of-week are commonly used to reveal temporal patterns in bike-share systems.
+Target the weekday from monday - friday to promote who are casual use in this time to help them recognize the benefit of become membership
+
+- Popular ride hours by weekday
+
+```{r}
+hour_weekday_counts <- all_trips_cleaned %>%
+  # only keep columns we need, and reorder weekdays
+  transmute(
+    member_casual,
+    ride_hour,
+    ride_weekday = factor(
+      ride_weekday,
+      levels = c("Monday", "Tuesday", "Wednesday",
+                 "Thursday", "Friday", "Saturday", "Sunday")
+    )
+  ) %>%
+  # create hour groups (ONLY in this new table)
+  mutate(
+    hour_group = cut(
+      ride_hour,
+      breaks = c(-1, 5, 9, 13, 17, 21, 23),
+      labels = c(
+        "00–05 Night",
+        "06–09 Morning peak",
+        "10–13 Late morning",
+        "14–17 Afternoon",
+        "18–21 Evening peak",
+        "22–23 Late night"
+      ),
+      ordered_result = TRUE
+    )
+  ) %>%
+  # count rides per weekday × hour_group × membership
+  count(member_casual, ride_weekday, hour_group, name = "rides")
 
 
+ggplot(hour_weekday_counts,
+       aes(x = hour_group, y = ride_weekday, fill = rides)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(name = "Number of rides",
+                      low = "white", high = "orange") +
+  facet_wrap(~ member_casual) +
+  labs(
+    title = "Hour-of-day vs Weekday Ride Intensity (Grouped Hours)",
+    x = "Time of day",
+    y = "Weekday"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+#Analyze the duration of two user type
+two plot some two type of user are commonly use in the same duaration but with the membership can look the user are use longer than the casual user
+so can approach the casual use two help them know with this same duration using membership can help them save money
+```{r}
+duration_data <- all_trips_cleaned %>%
+  transmute(
+    member_casual,
+    ride_length = as.numeric(ride_length_min)
+  ) %>%
+  filter(
+    !is.na(ride_length),
+    ride_length > 0,
+    ride_length <= 120          # keep rides up to 2 hours
+  )
+
+ggplot(duration_data,
+       aes(x = ride_length, fill = member_casual)) +
+  geom_histogram(color = "white", bins = 100) +
+  facet_wrap(~ member_casual, ncol = 1, scales = "free_y") +
+  scale_fill_manual(values = c(
+    "casual" = "orange",
+    "member" = "steelblue"
+  )) +
+  scale_x_continuous(
+    limits = c(0, 120),
+    breaks = seq(0, 120, by = 15),
+    labels = seq(0, 120, by = 15)
+  ) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "Distribution of Ride Duration by Member Type",
+    x = "Ride duration (minutes)",
+    y = "Number of rides",
+    fill = "Member Type") +
+  theme_minimal(base_size = 13)
+```
+
+```{r}
+duration_box_data <- all_trips_cleaned %>%
+  transmute(
+    member_casual,
+    ride_length = as.numeric(ride_length_min)
+  ) %>%
+  filter(
+    !is.na(ride_length),
+    ride_length > 0,
+    ride_length <= 30    # cap extreme outliers
+  )
+
+ggplot(duration_box_data,
+       aes(x = member_casual, y = ride_length, fill = member_casual)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c(
+    "casual" = "orange",
+    "member" = "steelblue"
+  )) +
+  labs(
+    title = "Ride Duration by Member Type",
+    x = "Member Type",
+    y = "Ride duration (minutes)",
+    fill = "Member Type"
+  ) +
+  theme_minimal(base_size = 13)
+
+```
+
+```{r}
+N_top <- 10   # choose how many top stations you want
+
+top_start_stations <- all_trips_cleaned %>%
+  filter(!is.na(start_station_name),
+         start_station_name != "") %>%
+  count(member_casual, start_station_name, name = "rides") %>%
+  group_by(member_casual) %>%
+  slice_max(rides, n = N_top, with_ties = FALSE) %>%
+  ungroup()
+
+
+# get a nice range for x-axis
+casual_data <- top_start_stations %>%
+  filter(member_casual == "casual")
+
+max_casual <- max(casual_data$rides)
+breaks_casual <- pretty(c(0, max_casual), n = 5)
+
+ggplot(casual_data,
+       aes(x = rides,
+           y = reorder(start_station_name, rides))) +
+  geom_col(fill = "orange") +
+  scale_x_continuous(
+    breaks = breaks_casual,
+    labels = comma(breaks_casual),
+    expand = expansion(mult = c(0, .02))
+  ) +
+  labs(
+    title = "Top 10 Start Stations – Casual Riders",
+    x = "Number of rides",
+    y = "Start station"
+  ) +
+  theme_minimal(base_size = 13)
+
+```
+
+
+```{r}
+member_data <- top_start_stations %>%
+  filter(member_casual == "member")
+
+max_member <- max(member_data$rides)
+breaks_member <- pretty(c(0, max_member), n = 5)
+
+ggplot(member_data,
+       aes(x = rides,
+           y = reorder(start_station_name, rides))) +
+  geom_col(fill = "steelblue") +
+  scale_x_continuous(
+    breaks = breaks_member,
+    labels = comma(breaks_member),
+    expand = expansion(mult = c(0, .02))
+  ) +
+  labs(
+    title = "Top 10 Start Stations – Members",
+    x = "Number of rides",
+    y = "Start station"
+  ) +
+  theme_minimal(base_size = 13)
+```
